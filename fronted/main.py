@@ -1,4 +1,5 @@
 # fronted/main.py
+import os
 import flet as ft
 import requests
 import asyncio
@@ -6,7 +7,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from flet.core.page import PageDisconnectedException
 
-API_URL = "http://127.0.0.1:9000/api"
+API_URL = os.getenv("API_URL", "http://127.0.0.1:9000/api")
 POLL_SECONDS = 3
 
 BG      = "#0b0f14"
