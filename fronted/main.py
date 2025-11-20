@@ -335,37 +335,86 @@ def MenuView(page: ft.Page):
     # ---------- Grid de menú ---------- #
     menu_grid = ft.ResponsiveRow(run_spacing=14, spacing=14)
 
+    def show_description(prod: Dict[str, Any]):
+        desc = prod.get("descripcion") or "Sin descripción disponible."
+
+        def close(e=None):
+            dialog.open = False
+            page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(prod.get("nombre", "Producto"), weight=ft.FontWeight.W_700),
+            content=ft.Text(desc, width=420),
+            actions=[ft.TextButton("Cerrar", on_click=close)],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.dialog = dialog
+        dialog.open = True
+        page.update()
+
     def render_menu():
         menu_grid.controls.clear()
+        secciones: Dict[str, List[Dict[str, Any]]] = {}
         for p in state.menu:
-            card = box_container(
-                ft.Column(
-                    spacing=8,
-                    controls=[
-                        ft.Text(p["nombre"], weight=ft.FontWeight.W_600, size=16),
-                        ft.Text(money(p["precio"]), weight=ft.FontWeight.W_700),
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.END,
-                            controls=[
-                                ft.FilledButton(
-                                    "Agregar",
-                                    icon="add_rounded",
-                                    style=ft.ButtonStyle(
-                                        shape=ft.RoundedRectangleBorder(radius=10),
-                                        bgcolor={"": BLUE600, "hovered": BLUE700},
-                                        color=WHITE,
-                                    ),
-                                    on_click=lambda e, prod=p: add_to_cart(prod),
-                                )
-                            ],
-                        ),
-                    ],
-                ),
-                pad=20,
-            )
+            seccion = (p.get("seccion") or "Otros").title()
+            secciones.setdefault(seccion, []).append(p)
+
+        for seccion, productos in sorted(secciones.items(), key=lambda kv: kv[0]):
             menu_grid.controls.append(
-                ft.Container(card, col={"xs": 12, "md": 6, "lg": 4})
+                ft.Container(
+                    ft.Text(seccion, size=18, weight=ft.FontWeight.W_700),
+                    col={"xs": 12},
+                    padding=ft.padding.symmetric(6, 4),
+                )
             )
+            for p in productos:
+                card = box_container(
+                    ft.Column(
+                        spacing=12,
+                        controls=[
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Text(
+                                        p["nombre"],
+                                        weight=ft.FontWeight.W_700,
+                                        size=16,
+                                        max_lines=2,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
+                                    tag_chip(p.get("seccion", ""), "#1f2937"),
+                                ],
+                            ),
+                            ft.Text(money(p["precio"]), weight=ft.FontWeight.W_700),
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                controls=[
+                                    ft.OutlinedButton(
+                                        "Ver descripción",
+                                        icon="info_outline",
+                                        on_click=lambda e, prod=p: show_description(prod),
+                                    ),
+                                    ft.FilledButton(
+                                        "Agregar",
+                                        icon="add_rounded",
+                                        style=ft.ButtonStyle(
+                                            shape=ft.RoundedRectangleBorder(radius=10),
+                                            bgcolor={"": BLUE600, "hovered": BLUE700},
+                                            color=WHITE,
+                                        ),
+                                        on_click=lambda e, prod=p: add_to_cart(prod),
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                    pad=20,
+                )
+                menu_grid.controls.append(
+                    ft.Container(card, col={"xs": 12, "md": 6, "lg": 4})
+                )
         page.update()
 
     # ---------- Cards ---------- #
