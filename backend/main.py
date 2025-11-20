@@ -117,7 +117,7 @@ productos = [
     },
 ]
 
-DATA_FILE = Path(__file__).with_name("pedidos.json")
+DATA_FILE = Path(__file__).resolve().with_name("pedidos.json")
 
 
 def _cargar_pedidos() -> List[Dict[str, object]]:
