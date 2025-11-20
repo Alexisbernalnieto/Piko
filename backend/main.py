@@ -176,6 +176,7 @@ async def get_menu():
     return sorted(productos, key=lambda p: (p.get("seccion", ""), p.get("nombre", "")))
 
 
+
 @app.post("/api/pedidos")
 async def create_pedido(pedido: Pedido):
     pedido_id = len(pedidos) + 1
