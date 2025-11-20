@@ -38,6 +38,40 @@ MODE_CHOICES = {
 }
 
 
+def adaptive_padding(page: ft.Page, base: int = 20) -> int:
+    """Return softer padding for small screens."""
+    try:
+        width = page.window_width or page.width or 0
+    except Exception:
+        return base
+
+    if width <= 480:
+        return max(8, int(base * 0.6))
+    if width <= 820:
+        return max(12, int(base * 0.8))
+    return base
+
+
+def adaptive_text_size(page: ft.Page, base: int) -> int:
+    """Scale text size for narrow devices."""
+    try:
+        width = page.window_width or page.width or 0
+    except Exception:
+        return base
+
+    if width <= 480:
+        return max(12, int(base * 0.85))
+    if width <= 820:
+        return max(13, int(base * 0.92))
+    return base
+
+
+def button_padding(page: ft.Page, *, h: int = 14, v: int = 12) -> ft.PaddingValue:
+    return ft.padding.symmetric(
+        horizontal=adaptive_padding(page, h), vertical=adaptive_padding(page, v)
+    )
+
+
 def money(n) -> str:
     try:
         return f"${float(n or 0):.2f}"
@@ -133,8 +167,9 @@ def top_bar(
     badge: Optional[ft.Control] = None,
     nav_controls: Optional[List[ft.Control]] = None,
 ) -> ft.Container:
+    pad = adaptive_padding(page)
     left_controls = [
-        ft.Text(title, size=24, weight=ft.FontWeight.W_700),
+        ft.Text(title, size=adaptive_text_size(page, 24), weight=ft.FontWeight.W_700),
     ]
     if badge:
         left_controls.append(badge)
@@ -160,25 +195,40 @@ def top_bar(
     )
 
     return ft.Container(
-        padding=ft.padding.only(bottom=20),
-        content=ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        padding=ft.padding.only(bottom=pad),
+        content=ft.ResponsiveRow(
             controls=[
-                ft.Row(
-                    spacing=12,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=left_controls,
+                ft.Container(
+                    ft.Row(
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=left_controls,
+                    ),
+                    col={"xs": 12, "md": 5, "lg": 6},
+                    alignment=ft.alignment.center_left,
                 ),
-                nav_section,
-                status,
+                ft.Container(
+                    nav_section,
+                    col={"xs": 12, "md": 4},
+                    alignment=ft.alignment.center,
+                ),
+                ft.Container(
+                    status,
+                    col={"xs": 12, "md": 3, "lg": 2},
+                    alignment=ft.alignment.center_right,
+                ),
             ],
+            spacing=12,
+            run_spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
     )
 
 
 def StartView(page: ft.Page):
     page.appbar = None
+    page.scroll = ft.ScrollMode.ADAPTIVE
+    pad = adaptive_padding(page)
 
     def select_mode(key: str):
         state.modo = key
@@ -189,8 +239,18 @@ def StartView(page: ft.Page):
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         controls=[
             tag_chip("Bienvenido", BLUE700),
-            ft.Text("Elige cómo será tu pedido", size=22, weight=ft.FontWeight.W_700),
-            ft.Text("¿Consumirás en sala o prefieres llevarlo?", color=MUTED),
+            ft.Text(
+                "Elige cómo será tu pedido",
+                size=adaptive_text_size(page, 22),
+                weight=ft.FontWeight.W_700,
+                text_align=ft.TextAlign.CENTER,
+            ),
+            ft.Text(
+                "¿Consumirás en sala o prefieres llevarlo?",
+                color=MUTED,
+                size=adaptive_text_size(page, 14),
+                text_align=ft.TextAlign.CENTER,
+            ),
         ],
     )
 
@@ -203,6 +263,7 @@ def StartView(page: ft.Page):
                 shape=ft.RoundedRectangleBorder(radius=10),
                 bgcolor={"": info["color"]},
                 color=WHITE,
+                padding=button_padding(page, h=16, v=12),
             ),
             on_click=lambda e, _k=key: select_mode(_k),
         )
@@ -210,30 +271,42 @@ def StartView(page: ft.Page):
             bgcolor=PANEL,
             border=ft.border.all(1, BORDER),
             border_radius=16,
-            padding=20,
+            padding=adaptive_padding(page, 18),
             on_click=lambda e, _k=key: select_mode(_k),
             content=ft.Column(
                 spacing=16,
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
                     ft.Icon(info["icon"], size=48, color=info["color"]),
-                    ft.Text(info["label"], size=20, weight=ft.FontWeight.W_700),
-                    ft.Text(info["desc"], color=MUTED),
+                    ft.Text(
+                        info["label"],
+                        size=adaptive_text_size(page, 20),
+                        weight=ft.FontWeight.W_700,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    ft.Text(
+                        info["desc"],
+                        color=MUTED,
+                        size=adaptive_text_size(page, 14),
+                        text_align=ft.TextAlign.CENTER,
+                    ),
                     btn,
                 ],
             ),
         )
         cards.append(ft.Container(card, col={"xs": 12, "sm": 6}))
 
-    grid = ft.ResponsiveRow(controls=cards, spacing=20, run_spacing=20)
+    gap = adaptive_padding(page, 20)
+    grid = ft.ResponsiveRow(controls=cards, spacing=gap, run_spacing=gap)
 
     view = ft.View(
         route="/",
+        scroll=ft.ScrollMode.ADAPTIVE,
         controls=[
             ft.Container(
                 bgcolor=BG,
                 expand=True,
-                padding=20,
+                padding=pad,
                 content=ft.Column(
                     controls=[header, grid],
                     spacing=32,
@@ -249,15 +322,26 @@ def StartView(page: ft.Page):
 
 def MenuView(page: ft.Page):
     page.appbar = None
+    page.scroll = ft.ScrollMode.ADAPTIVE
     if not state.modo:
         page.go("/")
         return
 
+    pad = adaptive_padding(page)
+
     current_mode = mode_meta(state.modo)
     cart_badge = pill("0 productos")
     nav_controls = [
-        ft.TextButton("Pantalla de pedidos", on_click=lambda e: page.go("/pantalla")),
-        ft.TextButton("Panel del barista", on_click=lambda e: page.go("/barista")),
+        ft.TextButton(
+            "Pantalla de pedidos",
+            on_click=lambda e: page.go("/pantalla"),
+            style=ft.ButtonStyle(padding=button_padding(page, h=10, v=8)),
+        ),
+        ft.TextButton(
+            "Panel del barista",
+            on_click=lambda e: page.go("/barista"),
+            style=ft.ButtonStyle(padding=button_padding(page, h=10, v=8)),
+        ),
     ]
     header = top_bar(page, "Piko", badge=cart_badge, nav_controls=nav_controls)
 
@@ -278,7 +362,7 @@ def MenuView(page: ft.Page):
             cart_list.controls.append(
                 ft.Container(
                     alignment=ft.alignment.center,
-                    padding=20,
+                    padding=pad,
                     content=ft.Column(
                         [
                             ft.Icon("shopping_bag", color=MUTED),
@@ -363,7 +447,11 @@ def MenuView(page: ft.Page):
         for seccion, productos in sorted(secciones.items(), key=lambda kv: kv[0]):
             menu_grid.controls.append(
                 ft.Container(
-                    ft.Text(seccion, size=18, weight=ft.FontWeight.W_700),
+                    ft.Text(
+                        seccion,
+                        size=adaptive_text_size(page, 18),
+                        weight=ft.FontWeight.W_700,
+                    ),
                     col={"xs": 12},
                     padding=ft.padding.symmetric(6, 4),
                 )
@@ -380,7 +468,7 @@ def MenuView(page: ft.Page):
                                     ft.Text(
                                         p["nombre"],
                                         weight=ft.FontWeight.W_700,
-                                        size=16,
+                                        size=adaptive_text_size(page, 16),
                                         max_lines=2,
                                         overflow=ft.TextOverflow.ELLIPSIS,
                                     ),
@@ -403,6 +491,7 @@ def MenuView(page: ft.Page):
                                             shape=ft.RoundedRectangleBorder(radius=10),
                                             bgcolor={"": BLUE600, "hovered": BLUE700},
                                             color=WHITE,
+                                            padding=button_padding(page, h=14, v=12),
                                         ),
                                         on_click=lambda e, prod=p: add_to_cart(prod),
                                     ),
@@ -413,7 +502,10 @@ def MenuView(page: ft.Page):
                     pad=20,
                 )
                 menu_grid.controls.append(
-                    ft.Container(card, col={"xs": 12, "md": 6, "lg": 4})
+                    ft.Container(
+                        card,
+                        col={"xs": 12, "sm": 6, "md": 6, "lg": 4, "xl": 3},
+                    )
                 )
         page.update()
 
@@ -427,45 +519,67 @@ def MenuView(page: ft.Page):
     menu_card = card_container(
         ft.Column(
             spacing=0,
+            scroll=ft.ScrollMode.ADAPTIVE,
             controls=[
                 ft.Container(
-                    padding=ft.padding.symmetric(16, 16),
+                    padding=ft.padding.symmetric(adaptive_padding(page, 16), adaptive_padding(page, 16)),
                     border=ft.border.only(bottom=ft.BorderSide(1, BORDER)),
-                    content=ft.Row(
+                    content=ft.ResponsiveRow(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=10,
+                        run_spacing=10,
                         controls=[
-                            ft.Column(
-                                [
-                                    ft.Text("Menú", size=20, weight=ft.FontWeight.W_700),
-                                    ft.Text(
-                                        f"{current_mode['label']} · {current_mode['desc']}",
-                                        color=MUTED,
-                                        size=12,
-                                    ),
-                                ],
-                                spacing=4,
+                            ft.Container(
+                                ft.Column(
+                                    [
+                                        ft.Text(
+                                            "Menú",
+                                            size=adaptive_text_size(page, 20),
+                                            weight=ft.FontWeight.W_700,
+                                        ),
+                                        ft.Text(
+                                            f"{current_mode['label']} · {current_mode['desc']}",
+                                            color=MUTED,
+                                            size=adaptive_text_size(page, 12),
+                                        ),
+                                    ],
+                                    spacing=4,
+                                ),
+                                col={"xs": 12, "md": 7},
                             ),
-                            ft.Row(
-                                spacing=8,
-                                controls=[
-                                    mode_badge,
-                                    ft.TextButton(
-                                        "Cambiar",
-                                        icon="autorenew",
-                                        on_click=change_mode,
-                                    ),
-                                    ft.TextButton(
-                                        "Ver todos los productos",
-                                        icon="grid_view",
-                                        on_click=lambda e: None,
-                                    ),
-                                ],
+                            ft.Container(
+                                ft.Row(
+                                    spacing=8,
+                                    run_spacing=8,
+                                    wrap=True,
+                                    alignment=ft.MainAxisAlignment.END,
+                                    controls=[
+                                        mode_badge,
+                                        ft.TextButton(
+                                            "Cambiar",
+                                            icon="autorenew",
+                                            style=ft.ButtonStyle(
+                                                padding=button_padding(page, h=10, v=8)
+                                            ),
+                                            on_click=change_mode,
+                                        ),
+                                        ft.TextButton(
+                                            "Ver todos los productos",
+                                            icon="grid_view",
+                                            style=ft.ButtonStyle(
+                                                padding=button_padding(page, h=10, v=8)
+                                            ),
+                                            on_click=lambda e: None,
+                                        ),
+                                    ],
+                                ),
+                                col={"xs": 12, "md": 5},
                             ),
                         ],
                     ),
                 ),
-                ft.Container(menu_grid, padding=20),
+                ft.Container(menu_grid, padding=pad),
             ],
         )
     )
@@ -498,7 +612,9 @@ def MenuView(page: ft.Page):
                         shape=ft.RoundedRectangleBorder(radius=12),
                         bgcolor=GREEN,
                         color=WHITE,
-                        padding=20,
+                        padding=ft.padding.symmetric(
+                            horizontal=pad, vertical=adaptive_padding(page, 14)
+                        ),
                     ),
                     on_click=lambda e: enviar_pedido(),
                 ),
@@ -530,11 +646,12 @@ def MenuView(page: ft.Page):
     content = ft.Container(
         bgcolor=BG,
         expand=True,
-        padding=20,
+        padding=pad,
         content=ft.Column(
             controls=[header, layout],
             spacing=20,
             expand=True,
+            scroll=ft.ScrollMode.ADAPTIVE,
         ),
     )
 
@@ -584,11 +701,15 @@ def MenuView(page: ft.Page):
             page.snack_bar.open = True
             page.update()
 
-    page.views.append(ft.View(route="/menu", controls=[content]))
+    page.views.append(
+        ft.View(route="/menu", controls=[content], scroll=ft.ScrollMode.ADAPTIVE)
+    )
 
 
 def StatusView(page: ft.Page, pedido_id: int):
     page.appbar = None
+    page.scroll = ft.ScrollMode.ADAPTIVE
+    pad = adaptive_padding(page)
 
     pedido_badge = pill(f"Pedido #{str(pedido_id).zfill(3)}")
     nav_controls = [
@@ -638,10 +759,11 @@ def StatusView(page: ft.Page, pedido_id: int):
 
     view = ft.View(
         route=f"/estado/{pedido_id}",
+        scroll=ft.ScrollMode.ADAPTIVE,
         controls=[
             ft.Container(
                 content=ft.Column([header, info_card, hint], spacing=16),
-                padding=20,
+                padding=pad,
                 expand=True,
                 bgcolor=BG,
             )
@@ -692,6 +814,8 @@ def StatusView(page: ft.Page, pedido_id: int):
 
 def BaristaView(page: ft.Page):
     page.appbar = None
+    page.scroll = ft.ScrollMode.ADAPTIVE
+    pad = adaptive_padding(page)
 
     def chip_estado(e: str):
         label = (e or "").strip().lower()
@@ -771,11 +895,11 @@ def BaristaView(page: ft.Page):
             expand=True,
         ),
         expand=True,
-        padding=20,
+        padding=pad,
         bgcolor=BG,
     )
 
-    view = ft.View("/barista", controls=[root])
+    view = ft.View("/barista", controls=[root], scroll=ft.ScrollMode.ADAPTIVE)
     page.views.append(view)
 
     # ---------- API helpers ---------- #
@@ -940,6 +1064,8 @@ def BaristaView(page: ft.Page):
 
 def WallboardView(page: ft.Page):
     page.appbar = None
+    page.scroll = ft.ScrollMode.ADAPTIVE
+    pad = adaptive_padding(page)
 
     nav_controls = [
         ft.TextButton("Ir al menú", on_click=lambda e: page.go("/menu")),
@@ -1045,7 +1171,7 @@ def WallboardView(page: ft.Page):
 
     body = ft.Container(
         bgcolor=BG,
-        padding=20,
+        padding=pad,
         expand=True,
         content=ft.Column(
             controls=[
@@ -1061,7 +1187,7 @@ def WallboardView(page: ft.Page):
         ),
     )
 
-    view = ft.View("/pantalla", controls=[body])
+    view = ft.View("/pantalla", controls=[body], scroll=ft.ScrollMode.ADAPTIVE)
     page.views.append(view)
 
     running = True
@@ -1085,6 +1211,7 @@ def app(page: ft.Page):
     page.title = "Piko - Cafetería Universitaria"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = BG
+    page.scroll = ft.ScrollMode.ADAPTIVE
 
     def route_change(e: ft.RouteChangeEvent):
         page.views.clear()
