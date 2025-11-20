@@ -333,7 +333,10 @@ def MenuView(page: ft.Page):
         return
 
     pad = adaptive_padding(page)
-    viewport_height = max(560, int((page.window_height or page.height or 900) - pad * 2))
+    viewport_height = max(
+        560,
+        int(((getattr(page, "window_height", None) or page.height or 900) - pad * 2)),
+    )
 
     current_mode = mode_meta(state.modo)
     cart_badge = pill("0 productos")
