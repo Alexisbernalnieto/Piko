@@ -722,6 +722,7 @@ def MenuView(page: ft.Page):
             controls=[header, layout],
             spacing=20,
             expand=True,
+            scroll=ft.ScrollMode.ADAPTIVE,
         ),
     )
 
