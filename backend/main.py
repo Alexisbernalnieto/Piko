@@ -132,6 +132,7 @@ def _cargar_pedidos() -> List[Dict[str, object]]:
 
 
 def _guardar_pedidos():
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
         with DATA_FILE.open("w", encoding="utf-8") as fh:
             json.dump(pedidos, fh, ensure_ascii=False, indent=2)
@@ -145,7 +146,7 @@ pedidos: List[Dict[str, object]] = _cargar_pedidos()
 # Modelo de datos de un pedido
 class Pedido(BaseModel):
     productos: List[int]
-    total: float
+    total: float = 0.0
     estado: str = "pendiente"
     modo: Optional[str] = None
 
@@ -187,7 +188,7 @@ async def create_pedido(pedido: Pedido):
     stored = {
         "id": pedido_id,
         "productos": pedido.productos,
-        "total": total or pedido.total,
+        "total": total or float(pedido.total or 0),
         "estado": pedido.estado,
         "modo": pedido.modo,
     }
