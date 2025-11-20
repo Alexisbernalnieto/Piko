@@ -1,13 +1,17 @@
 # fronted/main.py
+import asyncio
+import json
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import flet as ft
 import requests
-import asyncio
-from datetime import datetime
-from typing import List, Dict, Any, Optional
 from flet.core.page import PageDisconnectedException
 
 API_URL = "http://127.0.0.1:9000/api"
 POLL_SECONDS = 3
+PENDING_KEY = "piko_offline_pedidos"
 
 BG      = "#0b0f14"
 PANEL   = "#111827"
@@ -88,12 +92,13 @@ def tag_chip(text: str, color: str = "#374151"):
     )
 
 
-def card_container(content: ft.Control, pad: int = 16):
+def card_container(content: ft.Control, pad: int = 16, *, height: int | None = None):
     return ft.Container(
         bgcolor=PANEL,
         border=ft.border.all(1, BORDER),
         border_radius=14,
         padding=pad,
+        height=height,
         content=content,
     )
 
@@ -328,6 +333,7 @@ def MenuView(page: ft.Page):
         return
 
     pad = adaptive_padding(page)
+    viewport_height = max(560, int((page.window_height or page.height or 900) - pad * 2))
 
     current_mode = mode_meta(state.modo)
     cart_badge = pill("0 productos")
@@ -415,6 +421,54 @@ def MenuView(page: ft.Page):
         state.clear_cart()
         render_cart()
         update_badges_and_total()
+
+    # ---------- Offline helpers ---------- #
+    def load_offline_orders() -> list[dict]:
+        try:
+            raw = page.client_storage.get(PENDING_KEY)
+            if not raw:
+                return []
+            if isinstance(raw, str):
+                return json.loads(raw)
+            return raw if isinstance(raw, list) else []
+        except Exception:
+            return []
+
+    def save_offline_orders(data: list[dict]):
+        try:
+            page.client_storage.set(PENDING_KEY, json.dumps(data))
+        except Exception:
+            pass
+
+    def queue_offline_order(payload: dict):
+        queued = load_offline_orders()
+        payload_with_id = {**payload, "temp_id": f"local-{int(time.time())}"}
+        queued.append(payload_with_id)
+        save_offline_orders(queued)
+        page.snack_bar = ft.SnackBar(
+            ft.Text("Sin conexión. Pedido guardado y se enviará al reconectar."),
+        )
+        page.snack_bar.open = True
+        page.update()
+
+    def sync_offline_orders():
+        queued = load_offline_orders()
+        if not queued:
+            return
+        try:
+            r = requests.post(
+                f"{API_URL}/pedidos/sync",
+                json={"pedidos": queued},
+                timeout=12,
+            )
+            if r.status_code == 200:
+                save_offline_orders([])
+                page.snack_bar = ft.SnackBar(
+                    ft.Text(f"{len(queued)} pedido(s) sincronizados."),
+                )
+                page.snack_bar.open = True
+        except Exception:
+            return
 
     # ---------- Grid de menú ---------- #
     menu_grid = ft.ResponsiveRow(run_spacing=14, spacing=14)
@@ -505,6 +559,8 @@ def MenuView(page: ft.Page):
                     ft.Container(
                         card,
                         col={"xs": 12, "sm": 6, "md": 6, "lg": 4, "xl": 3},
+                        ink=True,
+                        on_click=lambda e, prod=p: show_description(prod),
                     )
                 )
         page.update()
@@ -519,7 +575,7 @@ def MenuView(page: ft.Page):
     menu_card = card_container(
         ft.Column(
             spacing=0,
-            scroll=ft.ScrollMode.ADAPTIVE,
+            expand=True,
             controls=[
                 ft.Container(
                     padding=ft.padding.symmetric(adaptive_padding(page, 16), adaptive_padding(page, 16)),
@@ -579,20 +635,31 @@ def MenuView(page: ft.Page):
                         ],
                     ),
                 ),
-                ft.Container(menu_grid, padding=pad),
+                ft.Container(
+                    expand=True,
+                    padding=pad,
+                    content=ft.Column(
+                        controls=[menu_grid],
+                        spacing=0,
+                        expand=True,
+                        scroll=ft.ScrollMode.ADAPTIVE,
+                    ),
+                ),
             ],
-        )
+        ),
+        height=viewport_height,
     )
 
     cart_card = card_container(
         ft.Column(
             spacing=14,
+            expand=True,
             controls=[
                 ft.Text("Tu pedido", size=20, weight=ft.FontWeight.W_700),
                 ft.Text("Agrega productos del menú", color=MUTED, size=12),
                 ft.Container(
                     content=cart_list,
-                    height=360,
+                    expand=True,
                     bgcolor=BOX,
                     border_radius=10,
                     padding=12,
@@ -631,6 +698,7 @@ def MenuView(page: ft.Page):
             ],
         ),
         pad=18,
+        height=viewport_height,
     )
 
     layout = ft.ResponsiveRow(
@@ -667,6 +735,7 @@ def MenuView(page: ft.Page):
 
     render_cart()
     update_badges_and_total()
+    sync_offline_orders()
 
     # ---------- Enviar pedido ---------- #
     def enviar_pedido():
@@ -686,9 +755,7 @@ def MenuView(page: ft.Page):
         try:
             r = requests.post(f"{API_URL}/pedidos", json=payload, timeout=10)
         except Exception:
-            page.snack_bar = ft.SnackBar(ft.Text("Sin conexión. Intenta de nuevo."))
-            page.snack_bar.open = True
-            page.update()
+            queue_offline_order(payload)
             return
 
         if r.status_code == 200:
@@ -937,7 +1004,19 @@ def BaristaView(page: ft.Page):
         def do_listo(e):
             ok = api_put_estado(pid, "listo")
             close()
-            if not ok:
+            if ok:
+                try:
+                    page.send_notification(
+                        "Pedido listo",
+                        f"El pedido #{pid} fue marcado como listo y se notificó al cliente.",
+                    )
+                except Exception:
+                    pass
+                page.snack_bar = ft.SnackBar(
+                    ft.Text(f"Pedido #{pid} marcado LISTO y notificado."),
+                )
+                page.snack_bar.open = True
+            else:
                 page.snack_bar = ft.SnackBar(ft.Text("No se pudo poner en LISTO."))
                 page.snack_bar.open = True
             reload()
