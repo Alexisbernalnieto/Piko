@@ -107,18 +107,66 @@ class AppState:
     def __init__(self):
         self.modo = None
         self.menu = []
-        self.carrito = [] # [{'product': p, 'quantity': q}]
+        self.carrito = [] 
         self.pedido_id = None
         self.pedidos = []
 
     def total(self) -> float:
-        # CORREGIDO: Aseguramos acceso seguro a las llaves
         return sum(float(item["product"].get("precio", 0)) * item["quantity"] for item in self.carrito)
 
     def clear_cart(self):
         self.carrito.clear()
 
 state = AppState()
+
+# --------------------- LÓGICA OFFLINE/SYNC --------------------- #
+
+async def sync_offline_orders(page: ft.Page):
+    """Revisa si hay pedidos guardados en el celular y trata de enviarlos."""
+    while True:
+        try:
+            pending_json = await page.client_storage.get_async(PENDING_KEY)
+            pending_orders = json.loads(pending_json) if pending_json else []
+
+            if pending_orders:
+                nuevos_pendientes = []
+                synced_count = 0
+                
+                for order in pending_orders:
+                    try:
+                        r = requests.post(f"{API_URL}/pedidos", json=order, timeout=5)
+                        if r.status_code == 200:
+                            synced_count += 1
+                        else:
+                            nuevos_pendientes.append(order) 
+                    except:
+                        nuevos_pendientes.append(order)
+                
+                if synced_count > 0:
+                    await page.client_storage.set_async(PENDING_KEY, json.dumps(nuevos_pendientes))
+                    page.snack_bar = ft.SnackBar(ft.Text(f"¡Conexión recuperada! {synced_count} pedidos sincronizados."), bgcolor=GREEN)
+                    page.snack_bar.open = True
+                    page.update()
+                    
+        except Exception as e:
+            print(f"Error en sync: {e}")
+            
+        await asyncio.sleep(10) 
+
+async def save_order_offline(page: ft.Page, payload):
+    """Guarda un pedido en el almacenamiento local del celular."""
+    try:
+        existing_json = await page.client_storage.get_async(PENDING_KEY)
+        current_list = json.loads(existing_json) if existing_json else []
+        
+        payload["modo"] = f"{payload['modo']} (OFFLINE)" 
+        current_list.append(payload)
+        
+        await page.client_storage.set_async(PENDING_KEY, json.dumps(current_list))
+        return True
+    except Exception as e:
+        print(f"Error guardando offline: {e}")
+        return False
 
 # --------------------- VISTAS --------------------- #
 
@@ -149,7 +197,6 @@ def MenuView(page: ft.Page):
     def update_total(): total_text.value = money(state.total()); page.update()
 
     def change_qty(pid, delta, p_data=None):
-        # CORREGIDO: Lógica segura para modificar cantidad
         found = False
         for item in state.carrito:
             if item["product"]["id"] == pid:
@@ -157,11 +204,7 @@ def MenuView(page: ft.Page):
                 if item["quantity"] <= 0: state.carrito.remove(item)
                 found = True
                 break
-        
-        if not found and delta > 0 and p_data:
-            # CORREGIDO: Estructura correcta al agregar
-            state.carrito.append({"product": p_data, "quantity": 1})
-            
+        if not found and delta > 0 and p_data: state.carrito.append({"product": p_data, "quantity": 1})
         render_cart(); update_total()
 
     def delete_grp(pid):
@@ -198,7 +241,6 @@ def MenuView(page: ft.Page):
                     ft.Text(money(p["precio"]), weight="bold", size=16),
                     ft.Row([
                         ft.OutlinedButton("Detalles", icon="info_outline", style=ft.ButtonStyle(padding=ft.padding.symmetric(6,10)), data=p, on_click=lambda e: (setattr(dlg_info.title, 'value', e.control.data["nombre"]), setattr(dlg_info.content, 'value', e.control.data["descripcion"]), page.open(dlg_info))),
-                        # CORREGIDO: add_to_cart usa change_qty con estructura correcta
                         ft.IconButton(icon="add_circle", icon_color=BLUE600, icon_size=32, tooltip="Agregar", data=p, on_click=lambda e: change_qty(e.control.data["id"], 1, e.control.data))
                     ], alignment="spaceBetween")
                 ]), pad=16), col={"xs": 12, "sm": 6, "md": 6, "lg": 4, "xl": 3}))
@@ -219,10 +261,8 @@ def MenuView(page: ft.Page):
         right_p.height = None if is_mobile else max(500, page.height - 100)
         menu_col.scroll = None if is_mobile else ft.ScrollMode.AUTO
         cart_col.scroll = None if is_mobile else ft.ScrollMode.AUTO
-        # CORREGIDO: Expand propiedad directa, no ft.Expanded
         menu_col.expand = not is_mobile
         cart_col.expand = not is_mobile
-        # CORREGIDO: Expand en panel padre
         left_p.content.expand = not is_mobile
         right_p.content.expand = not is_mobile
         page.update()
@@ -239,7 +279,6 @@ def CheckoutView(page: ft.Page):
     header = top_bar(page, "Piko", nav_controls=[])
     current_mode = mode_meta(state.modo)
 
-    # Lista de items con scroll en la Columna (CORREGIDO)
     lista_items = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO)
     for item in state.carrito:
         p = item["product"]; q = item["quantity"]
@@ -264,7 +303,17 @@ def CheckoutView(page: ft.Page):
             page.close(dlg)
             if r.status_code == 200: show_success()
             else: page.snack_bar = ft.SnackBar(ft.Text("Error al enviar."), open=True); page.update()
-        except: page.close(dlg); page.snack_bar = ft.SnackBar(ft.Text("Error de conexión."), open=True); page.update()
+        except:
+            page.close(dlg)
+            # GUARDAR OFFLINE
+            async def save_local():
+                success = await save_order_offline(page, payload)
+                if success:
+                    main_card.content = ft.Column([ft.Icon("wifi_off", color="#f59e0b", size=100), ft.Text("Sin Conexión", size=30, weight="bold"), ft.Text("Pedido guardado en dispositivo.", size=16), ft.Text("Se enviará al recuperar conexión.", color=MUTED)], alignment="center", horizontal_alignment="center", spacing=20)
+                    page.update()
+                    time.sleep(3); state.clear_cart(); page.go("/")
+                else: page.snack_bar = ft.SnackBar(ft.Text("Error crítico local."), open=True); page.update()
+            page.run_task(save_local)
 
     def btn_pago(txt, icon, col):
         return ft.Container(bgcolor=PANEL, border=ft.border.all(1, BORDER), border_radius=10, padding=20, ink=True, on_click=lambda e: procesar_pago(txt), content=ft.Row([ft.Icon(icon, color=col, size=30), ft.Text(txt, size=18, weight="bold")], alignment="center"))
@@ -272,7 +321,6 @@ def CheckoutView(page: ft.Page):
     main_card.content = ft.Column(controls=[
         ft.Text("Confirmar Pedido", size=28, weight="bold"), ft.Text("Revisa tu orden antes de pagar", color=MUTED), ft.Divider(color=BORDER, height=20),
         ft.Text("Resumen", size=18, weight="bold"),
-        # Contenedor fija la altura, columna hace el scroll
         ft.Container(content=lista_items, height=300, border=ft.border.all(1, BORDER), border_radius=10, padding=10),
         ft.Row([ft.Text("Total a Pagar", size=20, weight="bold"), ft.Text(money(state.total()), size=22, color=GREEN, weight="bold")], alignment="spaceBetween"),
         ft.Divider(color=BORDER, height=30), ft.Text("Selecciona Método de Pago", size=18, weight="bold"),
@@ -284,7 +332,6 @@ def CheckoutView(page: ft.Page):
 
 def BaristaView(page: ft.Page):
     page.appbar = None; page.scroll = ft.ScrollMode.ADAPTIVE; pad = adaptive_padding(page)
-    # SCROLL HORIZONTAL
     list_view = ft.ListView(spacing=pad, expand=True, padding=ft.padding.only(top=pad, bottom=pad), scroll_direction=ft.ScrollDirection.HORIZONTAL)
     header = top_bar(page, "Panel del barista", nav_controls=[ft.TextButton("Menú", on_click=lambda e: page.go("/menu"))])
 
@@ -361,8 +408,9 @@ def PantallaView(page: ft.Page):
 def main(page: ft.Page):
     page.title = "Piko - PWA"; page.theme_mode = ft.ThemeMode.DARK; page.bgcolor = BG; page.fonts = {"Roboto": "https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap"}
     page.vertical_alignment = "start"; page.horizontal_alignment = "start"
-    
-    state.clear_cart() # LIMPIEZA CRÍTICA AL INICIO
+    page.assets_dir = "assets"
+    state.clear_cart()
+    page.run_task(sync_offline_orders, page) # CORREGIDO: Pasamos 'page'
 
     def route_change(route):
         page.views.clear()
