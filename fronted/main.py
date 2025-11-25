@@ -205,7 +205,7 @@ def StartView(page: ft.Page):
 
     grid = ft.ResponsiveRow(controls=cards, spacing=adaptive_padding(page, 20), run_spacing=adaptive_padding(page, 20))
 
-    content_block = ft.Column(
+    content = ft.Column(
         controls=[
             ft.Container(header, width=800, alignment=ft.alignment.center),
             ft.Container(grid, width=800, alignment=ft.alignment.center),
@@ -224,7 +224,7 @@ def StartView(page: ft.Page):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
                 ft.Container(
-                    content=content_block,
+                    content=content,
                     bgcolor=BG,
                     expand=True,
                     padding=pad,
@@ -236,7 +236,6 @@ def StartView(page: ft.Page):
 
 def MenuView(page: ft.Page):
     page.appbar = None
-    page.scroll = None 
     
     if not state.modo:
         page.go("/")
@@ -251,7 +250,13 @@ def MenuView(page: ft.Page):
     ]
     header = top_bar(page, "Piko", nav_controls=nav_controls)
 
-    cart_list = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
+    # --- CONTROLES DE CONTENIDO (Referencias) ---
+    # Inicialmente SIN scroll interno para dar prioridad al móvil
+    cart_col = ft.Column(spacing=10, scroll=None)
+    menu_grid = ft.ResponsiveRow(run_spacing=15, spacing=15, alignment=ft.MainAxisAlignment.CENTER)
+    # Contenedor de menú sin scroll interno
+    menu_col = ft.Column([menu_grid], horizontal_alignment=ft.CrossAxisAlignment.CENTER, scroll=None)
+
     total_text = ft.Text("$0.00", size=24, weight=ft.FontWeight.W_800)
 
     def update_total():
@@ -259,9 +264,9 @@ def MenuView(page: ft.Page):
         page.update()
 
     def render_cart():
-        cart_list.controls.clear()
+        cart_col.controls.clear()
         if not state.carrito:
-            cart_list.controls.append(
+            cart_col.controls.append(
                 ft.Container(
                     alignment=ft.alignment.center,
                     padding=pad,
@@ -275,7 +280,7 @@ def MenuView(page: ft.Page):
             )
         else:
             for idx, p in enumerate(state.carrito):
-                cart_list.controls.append(
+                cart_col.controls.append(
                     box_container(
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -289,7 +294,7 @@ def MenuView(page: ft.Page):
                                     spacing=2,
                                     expand=True 
                                 ),
-                                ft.IconButton(icon=ft.Icons.DELETE_OUTLINE, icon_color="#fca5a5", on_click=lambda e, i=idx: remove_from_cart(i)),
+                                ft.IconButton(icon="delete_outline", icon_color="#fca5a5", on_click=lambda e, i=idx: remove_from_cart(i)),
                             ],
                         ),
                         pad=10,
@@ -316,20 +321,11 @@ def MenuView(page: ft.Page):
     def queue_offline_order(payload):
         page.snack_bar = ft.SnackBar(ft.Text("Sin conexión. Pedido guardado localmente.")); page.snack_bar.open = True; page.update()
 
-    menu_grid = ft.ResponsiveRow(run_spacing=15, spacing=15)
-
-    # --- SOLUCIÓN DEFINITIVA DEL DIALOGO ---
     def show_details(e):
-        # Recuperar la data del botón (Esto NO falla)
         prod_data = e.control.data
-        
-        print(f"Abriendo detalles de: {prod_data['nombre']}") # MIRA TU CONSOLA SI NO ABRE
-
-        # Función para cerrar
         def close_dlg(e):
-            page.close(dlg) # Usamos page.close() moderno
+            page.close(dlg)
 
-        # Creamos el dialogo DENTRO de la función
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text(prod_data.get("nombre", "Producto"), weight=ft.FontWeight.BOLD),
@@ -339,8 +335,6 @@ def MenuView(page: ft.Page):
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        
-        # Usamos page.open() que es la forma nueva y segura
         page.open(dlg)
 
     def render_menu():
@@ -374,16 +368,15 @@ def MenuView(page: ft.Page):
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             controls=[
-                                # --- AQUÍ ESTÁ LA MAGIA ---
                                 ft.OutlinedButton(
                                     "Detalles", 
-                                    icon=ft.Icons.INFO_OUTLINE, 
+                                    icon="info_outline", 
                                     style=ft.ButtonStyle(padding=5), 
-                                    data=p, # Guardamos los datos en el botón
-                                    on_click=show_details # Llamamos a la función
+                                    data=p, 
+                                    on_click=show_details
                                 ),
                                 ft.IconButton(
-                                    icon=ft.Icons.ADD_CIRCLE, 
+                                    icon="add_circle", 
                                     icon_color=BLUE600, 
                                     icon_size=32, 
                                     tooltip="Agregar", 
@@ -416,6 +409,7 @@ def MenuView(page: ft.Page):
             else: raise Exception
         except: queue_offline_order(payload)
 
+    # --- CONTENEDORES DE PANELES ---
     left_panel = ft.Container(
         content=ft.Column(
             controls=[
@@ -423,70 +417,110 @@ def MenuView(page: ft.Page):
                     content=ft.Row(
                         [
                             ft.Column([ft.Text("Menú", size=24, weight="bold"), ft.Text(f"{current_mode['label']}", color=MUTED)]),
-                            ft.TextButton("Cambiar modo", icon=ft.Icons.AUTORENEW, on_click=lambda e: (setattr(state, 'modo', None), page.go("/")))
+                            ft.TextButton("Cambiar modo", icon="autorenew", on_click=lambda e: (setattr(state, 'modo', None), page.go("/")))
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN
                     ),
                     padding=ft.padding.only(bottom=10)
                 ),
                 ft.Divider(color=BORDER),
-                ft.Column([menu_grid], scroll=ft.ScrollMode.AUTO, expand=True), 
+                menu_col # Referencia a la columna del menú
             ],
             spacing=5,
-            expand=True,
+            # expand=True se controla dinámicamente
         ),
         bgcolor=BG,
         border_radius=10,
         padding=10,
-        expand=True 
     )
 
     right_panel = card_container(
         ft.Column(
             spacing=15,
-            expand=True,
             controls=[
                 ft.Text("Tu pedido", size=20, weight="bold"),
                 ft.Divider(color=BORDER),
-                cart_list, 
+                cart_col, # Referencia a la columna del carrito
                 ft.Divider(color=BORDER),
                 ft.Row([ft.Text("Total", size=16), total_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.FilledButton("Enviar pedido", icon=ft.Icons.SEND_ROUNDED, bgcolor=GREEN, height=45, on_click=lambda e: enviar_pedido(), width=float("inf")),
-                ft.TextButton("Vaciar carrito", icon=ft.Icons.DELETE_OUTLINE, on_click=clear_cart, width=float("inf")),
+                ft.FilledButton("Enviar pedido", icon="send_rounded", bgcolor=GREEN, height=45, on_click=lambda e: enviar_pedido(), width=float("inf")),
+                ft.TextButton("Vaciar carrito", icon="delete_outline", on_click=clear_cart, width=float("inf")),
             ],
+            # expand=True se controla dinámicamente
         ),
         pad=20,
-        height=None 
     )
 
     layout = ft.ResponsiveRow(
         controls=[
             ft.Container(left_panel, col={"xs": 12, "md": 7, "lg": 8}), 
-            ft.Container(right_panel, col={"xs": 12, "md": 5, "lg": 4}, height=600), 
+            ft.Container(right_panel, col={"xs": 12, "md": 5, "lg": 4}), 
         ],
-        expand=True,
         spacing=20,
         run_spacing=20,
         vertical_alignment=ft.CrossAxisAlignment.START
     )
 
-    page.views.append(
-        ft.View(
-            route="/menu",
-            padding=pad,
-            bgcolor=BG,
-            controls=[
-                ft.Column(
-                    controls=[
-                        header,
-                        ft.Container(layout, expand=True)
-                    ],
-                    expand=True,
-                    spacing=10
-                )
-            ]
-        )
+    # --- VISTA PRINCIPAL CON REFERENCIA ---
+    # Creamos la vista y la guardamos en una variable para acceder a ella
+    view = ft.View(
+        route="/menu",
+        padding=pad,
+        bgcolor=BG,
+        scroll=ft.ScrollMode.AUTO, # SCROLL ACTIVADO POR DEFECTO (MÓVIL)
+        controls=[
+            ft.Column(
+                controls=[
+                    header,
+                    layout 
+                ],
+                spacing=10,
+            )
+        ]
     )
+
+    # --- INTERRUPTOR DE SCROLL (LÓGICA HÍBRIDA) ---
+    def responsive_update(e=None):
+        # Detectar si es móvil (ancho menor a 800)
+        is_mobile = page.width < 800
+
+        if is_mobile:
+            # MODO MÓVIL: 
+            # Activar scroll general de la vista
+            view.scroll = ft.ScrollMode.AUTO
+            
+            # Quitar límites de altura (crecimiento infinito)
+            left_panel.height = None
+            right_panel.height = None
+            
+            # Desactivar scroll interno y expansión
+            menu_col.scroll = None
+            cart_col.scroll = None
+            menu_col.expand = False
+            cart_col.expand = False
+            
+        else:
+            # MODO PC:
+            # Desactivar scroll general de la vista (pantalla fija)
+            view.scroll = None
+            
+            # Fijar altura de paneles
+            available_h = max(500, page.height - 100)
+            left_panel.height = available_h
+            right_panel.height = available_h
+            
+            # Activar scroll interno y expansión para llenar el panel
+            menu_col.scroll = ft.ScrollMode.AUTO
+            cart_col.scroll = ft.ScrollMode.AUTO
+            menu_col.expand = True
+            cart_col.expand = True
+
+        page.update()
+
+    page.on_resized = responsive_update
+    
+    # Agregamos la vista a la página
+    page.views.append(view)
 
     try:
         state.menu = requests.get(f"{API_URL}/menu", timeout=5).json()
@@ -497,6 +531,9 @@ def MenuView(page: ft.Page):
         
     render_cart()
     update_total()
+    
+    # Ejecutar ajuste inicial
+    responsive_update()
 
 def StatusView(page: ft.Page, pedido_id: int):
     page.appbar = None; page.scroll = ft.ScrollMode.ADAPTIVE; pad = adaptive_padding(page)
@@ -613,9 +650,10 @@ def main(page: ft.Page):
         page.update()
 
     def view_pop(view):
-        page.views.pop()
-        top_view = page.views[-1]
-        page.go(top_view.route)
+        if len(page.views) > 1:
+            page.views.pop()
+            top_view = page.views[-1]
+            page.go(top_view.route)
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
