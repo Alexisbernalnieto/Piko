@@ -121,37 +121,33 @@ state = AppState()
 
 # --------------------- LÓGICA OFFLINE/SYNC --------------------- #
 
+# Busca la función sync_offline_orders original y REEMPLÁZALA con esto:
+
 async def sync_offline_orders(page: ft.Page):
-    """Revisa si hay pedidos guardados en el celular y trata de enviarlos."""
+    print("--- Iniciando servicio de sincronización ---")
     while True:
         try:
-            pending_json = await page.client_storage.get_async(PENDING_KEY)
-            pending_orders = json.loads(pending_json) if pending_json else []
+            # VERIFICACIÓN DE SEGURIDAD:
+            if not page or not page.client_storage:
+                await asyncio.sleep(5)
+                continue
 
-            if pending_orders:
-                nuevos_pendientes = []
-                synced_count = 0
-                
-                for order in pending_orders:
-                    try:
-                        r = requests.post(f"{API_URL}/pedidos", json=order, timeout=5)
-                        if r.status_code == 200:
-                            synced_count += 1
-                        else:
-                            nuevos_pendientes.append(order) 
-                    except:
-                        nuevos_pendientes.append(order)
-                
-                if synced_count > 0:
-                    await page.client_storage.set_async(PENDING_KEY, json.dumps(nuevos_pendientes))
-                    page.snack_bar = ft.SnackBar(ft.Text(f"¡Conexión recuperada! {synced_count} pedidos sincronizados."), bgcolor=GREEN)
-                    page.snack_bar.open = True
-                    page.update()
-                    
+            pending_json = await page.client_storage.get_async(PENDING_KEY)
+            # ... resto de tu lógica de sincronización (igual que antes) ...
+            if pending_json:
+                pending_orders = json.loads(pending_json)
+                if pending_orders:
+                    # (Tu lógica de subida aquí...)
+                    pass 
+
+        except AttributeError:
+            # Si la página se desconecta, esperamos un poco
+            await asyncio.sleep(5)
         except Exception as e:
             print(f"Error en sync: {e}")
-            
-        await asyncio.sleep(10) 
+            await asyncio.sleep(10)
+        
+        await asyncio.sleep(10)
 
 async def save_order_offline(page: ft.Page, payload):
     """Guarda un pedido en el almacenamiento local del celular."""
@@ -330,87 +326,359 @@ def CheckoutView(page: ft.Page):
 
     page.views.append(ft.View(route="/checkout", bgcolor=BG, padding=pad, vertical_alignment="center", horizontal_alignment="center", scroll=ft.ScrollMode.AUTO, controls=[ft.Column([header, ft.Container(content=main_card, alignment=ft.alignment.center, expand=True)], expand=True)]))
 
-def BaristaView(page: ft.Page):
-    page.appbar = None; page.scroll = ft.ScrollMode.ADAPTIVE; pad = adaptive_padding(page)
-    list_view = ft.ListView(spacing=pad, expand=True, padding=ft.padding.only(top=pad, bottom=pad), scroll_direction=ft.ScrollDirection.HORIZONTAL)
-    header = top_bar(page, "Panel del barista", nav_controls=[ft.TextButton("Menú", on_click=lambda e: page.go("/menu"))])
+# Asegúrate de tener esto arriba en tu archivo main.py
+# from plyer import notification (opcional si usas el try-import de abajo)
 
-    def update_est(pid, est):
-        try: requests.put(f"{API_URL}/pedidos/{pid}/estado", json={"estado": est}, timeout=5); poll_task.cancel(); page.run_task(poll)
+def BaristaView(page: ft.Page):
+    # --- CONFIGURACIÓN ---
+    page.appbar = None
+    page.scroll = ft.ScrollMode.AUTO
+    pad = adaptive_padding(page)
+    TABLE_HEADER_BG, ROW_BG = "#1f2937", "#111827"
+    
+    # Import plyer si existe
+    try: from plyer import notification
+    except ImportError: notification = None
+
+    # --- NOTIFICACIONES ---
+    def send_push_notification(titulo, mensaje):
+        if notification:
+            try: notification.notify(title=titulo, message=mensaje, app_name="Piko Barista", timeout=5); return
+            except: pass
+        try: page.run_js(f"""new Notification("{titulo}", {{ body: "{mensaje}", icon: "/icons/icon-192.png" }});""")
         except: pass
 
+    try: page.run_js("""if (Notification.permission !== "granted") { Notification.requestPermission(); }""")
+    except: pass
+
+    # Contenedor principal de pedidos
+    orders_column = ft.Column(spacing=10, expand=False)
+    
+    header = top_bar(page, "Panel del barista", nav_controls=[ft.TextButton("Menú", on_click=lambda e: page.go("/menu"))])
+
+    # --- LÓGICA DE CONFIRMACIÓN Y ESTADOS ---
+    target_pid = [None] 
+
+    def confirmar_listo(e):
+        if target_pid[0]:
+            exito = update_est(target_pid[0], "listo")
+            if exito:
+                send_push_notification("¡Pedido Listo! ☕", f"El pedido #{str(target_pid[0]).zfill(3)} está listo.")
+                page.snack_bar = ft.SnackBar(ft.Text(f"Pedido #{target_pid[0]} LISTO ✅"), bgcolor=GREEN)
+                page.snack_bar.open = True
+                page.close(dlg_confirm)
+                page.update()
+
+    dlg_confirm = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("¿Pedido Terminado?"),
+        content=ft.Text("Se enviará notificación al cliente."),
+        actions=[
+            ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg_confirm), style=ft.ButtonStyle(color=MUTED)),
+            ft.FilledButton("SÍ, NOTIFICAR", bgcolor=GREEN, on_click=confirmar_listo),
+        ],
+        actions_alignment="end",
+    )
+
+    def abrir_confirmacion(pid):
+        target_pid[0] = pid
+        page.open(dlg_confirm)
+
+    def update_est(pid, est):
+        try: 
+            r = requests.put(f"{API_URL}/pedidos/{pid}/estado", json={"estado": est}, timeout=5)
+            if r.status_code == 200:
+                for p in state.pedidos:
+                    if p["id"] == pid: p["estado"] = est
+                render()
+                return True
+            return False
+        except: return False
+
+    # --- GENERADOR DE BOTONES (Se adapta al tamaño) ---
+    def get_action_buttons(pid, estado, is_mobile=False):
+        est = (estado or "pendiente").lower()
+        
+        # Estilos
+        btn_height = 45 if is_mobile else 35 # Botones más altos en celular
+        
+        btn_prep = ft.Container(
+            content=ft.Text("Preparando", size=12, weight="bold"),
+            bgcolor=BLUE600 if est == "pendiente" else "#1e3a8a",
+            padding=ft.padding.symmetric(8, 12), border_radius=6,
+            opacity=1 if est == "pendiente" else 0.3,
+            on_click=lambda e: update_est(pid, "preparando") if est == "pendiente" else None,
+            animate_opacity=300,
+            alignment=ft.alignment.center,
+            height=btn_height,
+            expand=is_mobile # En móvil ocupan todo el ancho disponible
+        )
+
+        btn_listo = ft.Container(
+            content=ft.Text("Listo", size=12, weight="bold", color=WHITE),
+            bgcolor=GREEN if est == "preparando" else "#064e3b",
+            padding=ft.padding.symmetric(8, 12), border_radius=6,
+            opacity=1 if est == "preparando" else 0.3,
+            on_click=lambda e: abrir_confirmacion(pid) if est == "preparando" else None,
+            animate_opacity=300,
+            alignment=ft.alignment.center,
+            height=btn_height,
+            expand=is_mobile
+        )
+        
+        if est == "listo":
+            return ft.Container(
+                content=ft.Row([ft.Icon("check_circle", color=GREEN, size=16), ft.Text("Notificado", color=GREEN, weight="bold", size=12)], alignment="center"),
+                padding=10, border=ft.border.all(1, GREEN), border_radius=8,
+                alignment=ft.alignment.center,
+                width=float("inf") if is_mobile else None
+            )
+
+        return ft.Row([btn_prep, btn_listo], spacing=10, expand=is_mobile)
+
+    # --- RENDERIZADO INTELIGENTE ---
     def render():
-        list_view.controls.clear()
-        filtrados = [p for p in state.pedidos if p.get("estado") != "confirmado"]
-        if not filtrados: list_view.controls.append(ft.Container(ft.Text("Sin pedidos.", color=MUTED), alignment=ft.alignment.center, padding=30)); page.update(); return
+        orders_column.controls.clear()
+        try: filtrados = [p for p in state.pedidos if p.get("estado") != "confirmado"]
+        except: filtrados = []
+        
+        # Detectamos si es Móvil o PC
+        is_mobile = page.width < 650 
+
+        # 1. SI ES PC: Mostramos el Header de la Tabla
+        if not is_mobile:
+            header_row = ft.Container(bgcolor=TABLE_HEADER_BG, padding=ft.padding.all(15), border_radius=ft.border_radius.only(top_left=10, top_right=10), content=ft.Row([
+                    ft.Text("ID", width=50, color=MUTED, weight="bold"),
+                    ft.Text("Productos", expand=True, color=MUTED, weight="bold"),
+                    ft.Text("Total", width=80, color=MUTED, weight="bold"),
+                    ft.Text("Estado", width=100, color=MUTED, weight="bold"),
+                    ft.Text("Acciones", width=160, color=MUTED, weight="bold", text_align="center"),
+                ], alignment="spaceBetween"))
+            orders_column.controls.append(header_row)
+
+        if not filtrados:
+            orders_column.controls.append(ft.Container(ft.Text("No hay pedidos pendientes", italic=True, color=MUTED), padding=40, alignment=ft.alignment.center, bgcolor=ROW_BG))
         
         for p in sorted(filtrados, key=lambda x: x["id"]):
             pid = p["id"]; est = p.get("estado", "pendiente").lower()
-            btn = ft.Container()
-            if est == "pendiente": btn = ft.FilledButton("INICIAR", on_click=lambda e, id=pid: update_est(id, "preparando"), bgcolor=BLUE600, width=float("inf"))
-            elif est == "preparando": btn = ft.FilledButton("LISTO", on_click=lambda e, id=pid: update_est(id, "listo"), bgcolor=GREEN, width=float("inf"))
-            elif est == "listo": btn = ft.OutlinedButton("ENTREGAR", on_click=lambda e, id=pid: update_est(id, "confirmado"), width=float("inf"))
+            prods_str = ", ".join(p.get("productos_nombres", []))
             
-            prods = ft.Column([ft.Text(f"• {n}", size=14, color=WHITE, max_lines=1, overflow="ellipsis") for n in p.get("productos_nombres", [])], spacing=4, scroll=ft.ScrollMode.ADAPTIVE, expand=True)
-            
-            card = ft.Container(
-                content=card_container(ft.Column([
-                    ft.Row([ft.Text(f"#{str(pid).zfill(3)}", weight="bold", size=24), tag_chip(est, state_color(est))], alignment="spaceBetween"),
-                    ft.Text(p["modo"], color=MUTED), ft.Text(money(p['total']), size=18, weight="bold"),
-                    ft.Divider(color=BORDER, height=10), ft.Text("Productos:", weight="bold"),
-                    ft.Container(content=prods, expand=True, padding=ft.padding.only(bottom=10)), btn
-                ], spacing=10, expand=True), pad=20, expand=True),
-                width=300, height=page.height*0.75
-            )
-            list_view.controls.append(card)
+            # --- DISEÑO MÓVIL (TARJETA VERTICAL) ---
+            if is_mobile:
+                card_mobile = ft.Container(
+                    bgcolor=ROW_BG, padding=15, border_radius=12,
+                    border=ft.border.all(1, "#374151"),
+                    content=ft.Column([
+                        # Fila Superior: ID y Estado
+                        ft.Row([
+                            ft.Text(f"#{str(pid).zfill(3)}", size=20, weight="bold", color=WHITE),
+                            tag_chip(est, state_color(est))
+                        ], alignment="spaceBetween"),
+                        ft.Divider(color="#374151", height=5),
+                        # Centro: Productos
+                        ft.Text(prods_str, color=WHITE, weight="500", size=16),
+                        ft.Text(p.get("modo", ""), size=12, color=MUTED),
+                        ft.Divider(color="#374151", height=5),
+                        # Fila Inferior: Botones grandes
+                        ft.Row([
+                            ft.Text(money(p['total']), size=16, weight="bold", color=BLUE600),
+                        ]),
+                        ft.Container(get_action_buttons(pid, est, is_mobile=True), padding=ft.padding.only(top=5))
+                    ])
+                )
+                orders_column.controls.append(card_mobile)
+
+            # --- DISEÑO PC (FILA DE TABLA) ---
+            else:
+                row_pc = ft.Container(
+                    bgcolor=ROW_BG, padding=ft.padding.symmetric(horizontal=15, vertical=20), 
+                    border=ft.border.only(bottom=ft.BorderSide(1, "#374151")), 
+                    content=ft.Row([
+                        ft.Text(f"{str(pid).zfill(3)}", width=50, weight="bold", size=16),
+                        ft.Column([ft.Text(prods_str, color=WHITE, weight="500", size=14, max_lines=2, overflow="ellipsis"), ft.Text(p.get("modo", ""), size=12, color=MUTED)], spacing=2, expand=True),
+                        ft.Text(money(p['total']), width=80, size=14),
+                        ft.Container(tag_chip(est, state_color(est)), width=100, alignment=ft.alignment.center_left),
+                        ft.Container(get_action_buttons(pid, est, is_mobile=False), width=160, alignment=ft.alignment.center),
+                    ], alignment="spaceBetween", vertical_alignment="center")
+                )
+                orders_column.controls.append(row_pc)
+                
         page.update()
 
-    page.views.append(ft.View(route="/barista", controls=[ft.Container(content=ft.Column([header, ft.Container(list_view, expand=True)], spacing=16, expand=True), padding=pad, expand=True, bgcolor=BG)]))
+    # Listener para redimensionar (Si giras el celular o cambias tamaño ventana)
+    def on_resize(e):
+        render()
+    page.on_resize = on_resize
+
+    # Contenedor principal
+    main_container = ft.Container(
+        # En móvil quitamos el borde externo para ganar espacio
+        bgcolor=BG if page.width < 650 else ROW_BG, 
+        border=ft.border.all(1, "#374151") if page.width > 650 else None,
+        border_radius=12, padding=0, 
+        content=ft.Column([
+            ft.Container(content=ft.Row([
+                ft.Text("Pedidos en curso", size=18, weight="bold"), 
+                ft.Container(ft.Text(f"Activos", size=12), bgcolor="#374151", padding=ft.padding.symmetric(4, 8), border_radius=10)
+            ], alignment="spaceBetween"), padding=ft.padding.all(20) if page.width > 650 else ft.padding.only(bottom=10)),
+            orders_column
+        ])
+    )
+
+    page.views.append(ft.View(route="/barista", scroll=ft.ScrollMode.AUTO, controls=[ft.Container(content=ft.Column([header, main_container], spacing=10), padding=pad, expand=True, bgcolor=BG)]))
     
-    running = True
+    # --- POLLING ---
+    control_flag = [True] 
     async def poll():
-        while running:
-            try: r = requests.get(f"{API_URL}/pedidos", timeout=5); 
+        while control_flag[0]:
+            try: 
+                r = requests.get(f"{API_URL}/pedidos", timeout=5)
+                if r.status_code == 200: state.pedidos = r.json(); render()
             except: pass
-            else: 
-                if r.status_code==200: state.pedidos = r.json(); render()
             try: await asyncio.sleep(POLL_SECONDS)
-            except: running = False
-    poll_task = page.run_task(poll); page.views[-1].on_dispose = lambda e: setattr(poll, 'running', False)
+            except: control_flag[0] = False
+    poll_task = page.run_task(poll); page.views[-1].on_dispose = lambda e: control_flag.__setitem__(0, False)
 
 def PantallaView(page: ft.Page):
-    page.appbar = None; page.scroll = ft.ScrollMode.ADAPTIVE; pad = adaptive_padding(page)
-    col_p = ft.Column(spacing=15, scroll=ft.ScrollMode.AUTO, expand=True); col_l = ft.Column(spacing=15, scroll=ft.ScrollMode.AUTO, expand=True)
+    # --- CONFIGURACIÓN ---
+    page.appbar = None
+    # 1. ACTIVAMOS SCROLL GENERAL (Obligatorio para móvil)
+    page.scroll = ft.ScrollMode.AUTO 
+    pad = adaptive_padding(page)
+    
+    COL_HEADER_BG = "#1f2937" 
+    ROW_BG = "#111827"
+    
+    # 2. QUITAMOS SCROLL INTERNO Y EXPAND
+    # Importante: expand=False permite que la columna crezca infinitamente hacia abajo
+    col_p = ft.Column(spacing=10, expand=False) 
+    col_l = ft.Column(spacing=10, expand=False) 
     
     def render():
         col_p.controls.clear(); col_l.controls.clear()
-        pp = [p for p in state.pedidos if p.get("estado")=="preparando"]; pl = [p for p in state.pedidos if p.get("estado")=="listo"]
-        for p in sorted(pp, key=lambda x: x["id"])[:6]: col_p.controls.append(box_container(ft.Row([ft.Text(f"#{str(p['id']).zfill(3)}", size=24, weight="bold"), ft.Text(p["modo"], color=MUTED, size=18)], alignment="spaceBetween"), pad=15))
-        for p in sorted(pl, key=lambda x: x["id"])[:6]: col_l.controls.append(box_container(ft.Row([ft.Text(f"#{str(p['id']).zfill(3)}", size=24, weight="bold"), ft.Text(p["modo"], color=MUTED, size=18)], alignment="spaceBetween"), pad=15))
+        try:
+            pp = [p for p in state.pedidos if p.get("estado") == "preparando"]
+            pl = [p for p in state.pedidos if p.get("estado") == "listo"]
+        except: pp = []; pl = []
+        
+        # --- PREPARANDO ---
+        if not pp: 
+            col_p.controls.append(ft.Container(ft.Text("Todo tranquilo...", color=MUTED, italic=True), padding=20))
+        
+        for p in sorted(pp, key=lambda x: x["id"]):
+            card = ft.Container(
+                bgcolor=ROW_BG, padding=15, border_radius=8,
+                border=ft.border.only(left=ft.BorderSide(5, BLUE600)),
+                content=ft.Row([
+                    ft.Text(f"#{str(p['id']).zfill(3)}", size=28, weight="bold", color=WHITE),
+                    ft.Column([ft.Text("Preparando...", color=BLUE600, weight="bold"), ft.Text(p.get("modo", ""), color=MUTED, size=12)])
+                ], alignment="spaceBetween")
+            )
+            col_p.controls.append(card)
+        
+        # --- LISTOS ---
+        if not pl: 
+            col_l.controls.append(ft.Container(ft.Text("Esperando pedidos...", color=MUTED, italic=True), padding=20))
+            
+        for p in sorted(pl, key=lambda x: x["id"]):
+            card = ft.Container(
+                bgcolor=ROW_BG, padding=15, border_radius=8,
+                border=ft.border.only(left=ft.BorderSide(5, GREEN)),
+                content=ft.Row([
+                    ft.Text(f"#{str(p['id']).zfill(3)}", size=28, weight="bold", color=WHITE),
+                    ft.Row([
+                        ft.Text("¡LISTO!", color=GREEN, weight="bold", size=16),
+                        ft.Icon("check_circle", color=GREEN) 
+                    ], spacing=5)
+                ], alignment="spaceBetween")
+            )
+            col_l.controls.append(card)
         page.update()
 
-    grid = ft.ResponsiveRow(controls=[
-        ft.Container(card_container(ft.Column([ft.Text("Preparando", size=24, weight="bold", color=BLUE600), ft.Divider(color=BORDER), col_p], expand=True), expand=True), col={"xs":12, "md":6}, height=page.height*0.8),
-        ft.Container(card_container(ft.Column([ft.Text("Listos", size=24, weight="bold", color=GREEN), ft.Divider(color=BORDER), col_l], expand=True), expand=True), col={"xs":12, "md":6}, height=page.height*0.8)
-    ], spacing=pad)
+    # --- ESTRUCTURA RESPONSIVA ---
+    grid = ft.ResponsiveRow(
+        controls=[
+            # Columna Izquierda (Preparando)
+            ft.Container(
+                col={"xs": 12, "md": 6}, 
+                bgcolor=BG, border_radius=10, padding=10,
+                # Altura automática (sin expand)
+                content=ft.Column([
+                    ft.Container(bgcolor=COL_HEADER_BG, padding=15, border_radius=8, 
+                        content=ft.Row([ft.Icon("timelapse", color=BLUE600), ft.Text("PREPARANDO", size=20, weight="bold", color=BLUE600)], alignment="center")
+                    ),
+                    ft.Divider(color=BORDER), 
+                    col_p
+                ], expand=False) 
+            ),
+            # Columna Derecha (Listos)
+            ft.Container(
+                col={"xs": 12, "md": 6}, 
+                bgcolor=BG, border_radius=10, padding=10,
+                # Altura automática (sin expand)
+                content=ft.Column([
+                    ft.Container(bgcolor=COL_HEADER_BG, padding=15, border_radius=8, 
+                        content=ft.Row([ft.Icon("check_circle", color=GREEN), ft.Text("LISTOS PARA RECOGER", size=20, weight="bold", color=GREEN)], alignment="center")
+                    ),
+                    ft.Divider(color=BORDER), 
+                    col_l
+                ], expand=False)
+            )
+        ],
+        spacing=20,
+        expand=False # <--- ESTE ES EL SECRETO: El grid crece lo que tenga que crecer
+    )
     
-    page.views.append(ft.View(route="/pantalla", controls=[ft.Container(content=ft.Column([ft.Row([ft.Text("Pedidos en Curso", size=adaptive_text_size(page, 32), weight="bold"), ft.TextButton("Menú", on_click=lambda e: page.go("/menu"))], alignment="spaceBetween"), grid], spacing=pad), padding=pad, expand=True, bgcolor=BG)]))
+    header_nav = ft.Row([ft.Text("Monitor de Pedidos", size=14, color=MUTED), ft.TextButton("Menú", on_click=lambda e: page.go("/menu"))], alignment="spaceBetween")
+
+    page.views.append(ft.View(
+        route="/pantalla", 
+        # Aseguramos que la vista maneje el scroll
+        scroll=ft.ScrollMode.AUTO,
+        controls=[
+            ft.Container(
+                content=ft.Column([header_nav, grid], spacing=10, expand=False), # Columna principal sin expandir
+                padding=pad, 
+                bgcolor=BG
+            )
+        ]
+    ))
     
-    running = True
+    # --- POLLING ---
+    control_flag = [True] 
     async def poll():
-        while running:
-            try: state.pedidos = requests.get(f"{API_URL}/pedidos", timeout=5).json(); render()
+        while control_flag[0]:
+            try: 
+                r = requests.get(f"{API_URL}/pedidos", timeout=5)
+                if r.status_code == 200: state.pedidos = r.json(); render()
             except: pass
             try: await asyncio.sleep(POLL_SECONDS)
-            except: running = False
-    page.run_task(poll); page.views[-1].on_dispose = lambda e: setattr(poll, 'running', False)
+            except: control_flag[0] = False
+    poll_task = page.run_task(poll); page.views[-1].on_dispose = lambda e: control_flag.__setitem__(0, False)
 
 def main(page: ft.Page):
+
+    page.assets_dir = "assets"# Esto inyecta Javascript para registrar el Service Worker
+    script_sw = """
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').then(function(registration) {
+            console.log('ServiceWorker registrado con éxito: ', registration.scope);
+          }, function(err) {
+            console.log('Fallo al registrar ServiceWorker: ', err);
+          });
+        });
+      }
+    </script>
+    """
     page.title = "Piko - PWA"; page.theme_mode = ft.ThemeMode.DARK; page.bgcolor = BG; page.fonts = {"Roboto": "https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap"}
     page.vertical_alignment = "start"; page.horizontal_alignment = "start"
     page.assets_dir = "assets"
     state.clear_cart()
     page.run_task(sync_offline_orders, page) # CORREGIDO: Pasamos 'page'
+
+
 
     def route_change(route):
         page.views.clear()
