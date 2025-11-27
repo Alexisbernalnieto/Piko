@@ -134,7 +134,7 @@ async def sync_offline_orders(page: ft.Page):
                 synced_count = 0
                 
                 # CAMBIO: Usamos httpx async
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(trust_env=False) as client:
                     for order in pending_orders:
                         try:
                             r = await client.post(f"{API_URL}/pedidos", json=order, timeout=5)
@@ -269,7 +269,7 @@ def MenuView(page: ft.Page):
     # CAMBIO: Carga asíncrona del menú
     async def init_menu():
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 r = await client.get(f"{API_URL}/menu", timeout=5)
                 state.menu = r.json()
                 render_menu()
@@ -314,7 +314,7 @@ def CheckoutView(page: ft.Page):
         try:
             print("Intentando enviar...")
             # CAMBIO: HTTPX POST
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 r = await client.post(f"{API_URL}/pedidos", json=payload, timeout=2)
                 page.close(loading)
                 if r.status_code == 200:
@@ -385,7 +385,7 @@ def BaristaView(page: ft.Page):
 
     async def update_est(pid, est):
         try:
-            async with httpx.AsyncClient() as client:
+           async with httpx.AsyncClient(trust_env=False) as client:
                 r = await client.put(f"{API_URL}/pedidos/{pid}/estado", json={"estado": est}, timeout=5)
                 if r.status_code == 200:
                     for p in state.pedidos:
@@ -428,7 +428,7 @@ def BaristaView(page: ft.Page):
     async def poll():
         while control_flag[0]:
             try: 
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(trust_env=False) as client:
                     r = await client.get(f"{API_URL}/pedidos", timeout=5)
                     if r.status_code == 200: state.pedidos = r.json(); render()
             except: pass
@@ -460,7 +460,7 @@ def PantallaView(page: ft.Page):
     async def poll():
         while control_flag[0]:
             try: 
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(trust_env=False) as client:
                     r = await client.get(f"{API_URL}/pedidos", timeout=5)
                     if r.status_code == 200: state.pedidos = r.json(); render()
             except: pass

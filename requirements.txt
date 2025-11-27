@@ -1,4 +1,7 @@
+flet
 fastapi
 uvicorn
+httpx
 requests
-flet
+plyer
+pydantic    
