@@ -491,4 +491,4 @@ def main(page: ft.Page):
     page.on_route_change = route_change; page.on_view_pop = view_pop; page.go(page.route)
 
 if __name__ == "__main__":
-    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550, assets_dir="assets")
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER, assets_dir="assets")
