@@ -470,7 +470,6 @@ def PantallaView(page: ft.Page):
 
 # --- MAIN ---
 def main(page: ft.Page):
-    script_sw = """<script>if ('serviceWorker' in navigator) { window.addEventListener('load', function() { navigator.serviceWorker.register('/sw.js'); }); }</script>"""
     page.title = "Piko - PWA"; page.theme_mode = ft.ThemeMode.DARK; page.bgcolor = BG
     page.vertical_alignment = "start"; page.horizontal_alignment = "start"
     page.assets_dir = "assets"
