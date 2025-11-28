@@ -1,7 +1,8 @@
-flet
 fastapi
 uvicorn
+pydantic
+psycopg2-binary
+flet
 httpx
-requests
-plyer
-pydantic    
+
+
