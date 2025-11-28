@@ -9,7 +9,7 @@ import httpx # CAMBIO: Librería asíncrona
 
 # --- Configuración y Colores ---
 # CAMBIA ESTO POR TU URL REAL (Render/Ngrok) CUANDO SUBAS A NETLIFY
-API_URL = "https://piko-backend-4xyv.onrender.com/api"
+API_URL = "https://api.render.com/deploy/srv-d4j95jf5r7bs73f8ppm0?key=MbXF9R6EJD4/api"
 
 POLL_SECONDS = 3
 PENDING_KEY = "piko_offline_pedidos"
